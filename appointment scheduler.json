@@ -1,0 +1,1296 @@
+{
+  "name": "appointment scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "a65d415b-5b1e-49b6-a220-eaba5c79c7bd",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4ab71d44-8e95-46de-a568-0fa16b42e267",
+      "name": "Webhook",
+      "webhookId": "a65d415b-5b1e-49b6-a220-eaba5c79c7bd"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $node[\"Webhook\"].json.body || {};\nconst hospitalId = String(body.hospital_id || \"\").trim();\nconst department = String(body.department || \"\").toLowerCase().trim();\nconst slotDate   = String(body.slot_date || \"\").trim();\nconst slotTime   = String(body.slot_time || \"\").trim();\nconst preferredDoctorId = String(body.doctor_id || \"\").trim();\n\nif (!hospitalId || !department || !slotDate || !slotTime) {\n  return [{\n    json: { ok:false, reason:\"MISSING_FIELDS\",\n      message:\"Required: hospital_id, department, slot_date, slot_time\" }\n  }];\n}\n\n// --- helpers ---\nconst normKey = k => String(k || \"\")\n  .trim()                  // remove trailing spaces like \"slots_json \"\n  .toLowerCase()\n  .replace(/\\s+/g, \"_\");   // spaces -> underscores\n\nconst parseSlots = v => {\n  try {\n    if (Array.isArray(v)) return v.map(x => String(x).trim());\n    if (typeof v === \"string\") {\n      const cleaned = v.trim().replace(/'/g, '\"');\n      const arr = JSON.parse(cleaned);\n      return Array.isArray(arr) ? arr.map(x => String(x).trim()) : [];\n    }\n    return [];\n  } catch { return []; }\n};\n\n// --- normalize each row from Google Sheets ---\nconst rows = items.map(i => i.json);\n\nconst docs = rows.map((raw, idx) => {\n  // normalize keys (handles \"slots_json \" and \"timezone \")\n  const n = {};\n  for (const k of Object.keys(raw)) n[normKey(k)] = raw[k];\n\n  const rowIndex =\n    Number(n.row_number ?? raw._row ?? raw.rowNumber ?? raw.__row ?? (idx + 2));\n\n  const slots = parseSlots(n.slots_json);\n\n  return {\n    rowIndex,\n    doctor_id:     String(n.doctor_id || \"\").trim(),\n    doctor_name:   String(n.doctor_name || \"\").trim(),\n    doctor_email:  String(n.doctor_email || \"\").trim(),\n    hospital_id:   String(n.hospital_id || \"\").trim(),\n    hospital_name: String(n.hospital_name || \"\").trim(),\n    hospital_email: String(n.hospital_email || \"\").trim(),\n    department:    String(n.department || \"\").toLowerCase().trim(),\n    slot_date:     String(n.slot_date || \"\").trim(),\n    slots,\n    timezone:      String(n.timezone || \"Asia/Kuala_Lumpur\").trim(),\n    phone:         String(n.phone || \"\").trim(),\n    website:       String(n.website || \"\").trim(),\n    status:        String(n.status || \"active\").toLowerCase().trim(),\n    version:       Number(n.version ?? 0),\n  };\n});\n\n// --- filter: active, correct hospital/department/date, slot available ---\nconst eligible = docs.filter(d =>\n  d.status === \"active\" &&\n  d.hospital_id === hospitalId &&\n  d.department === department &&\n  d.slot_date === slotDate &&\n  d.slots.includes(slotTime)\n);\n\nif (!eligible.length) {\n  return [{\n    json: {\n      ok:false,\n      reason:\"NO_SLOT\",\n      message:\"No active doctors available for that time.\",\n      filters:{ hospitalId, department, slotDate, slotTime }\n    }\n  }];\n}\n\n// --- prefer user choice if present ---\nlet chosen = null;\nif (preferredDoctorId) {\n  chosen = eligible.find(d => d.doctor_id === preferredDoctorId);\n  if (!chosen) {\n    return [{\n      json: {\n        ok:false,\n        reason:\"DOCTOR_NOT_AVAILABLE\",\n        message:\"Chosen doctor is not available for the requested time.\",\n        requested_doctor_id: preferredDoctorId\n      }\n    }];\n  }\n} else {\n  // deterministic auto-pick: fewest remaining slots, then name A→Z\n  eligible.sort((a, b) => {\n    const c = a.slots.length - b.slots.length;\n    if (c !== 0) return c;\n    return a.doctor_name.localeCompare(b.doctor_name);\n  });\n  chosen = eligible[0];\n}\n\n// --- output booking payload ---\nconst bookingId = \"BK_\" + Math.random().toString(36).slice(2, 8).toUpperCase();\nconst user = body.user || {};\n\nreturn [{\n  json: {\n    ok: true,\n    booking: {\n      booking_id: bookingId,\n      hospital_id: chosen.hospital_id,\n      hospital_name: chosen.hospital_name,\n      hospitalEmail: chosen.hospital_email,\n      department: chosen.department,\n      doctor_id: chosen.doctor_id,\n      doctor_name: chosen.doctor_name,\n      doctor_email: chosen.doctor_email,\n      doctor_phone: chosen.phone,\n      doctor_website: chosen.website,\n      slot_date: chosen.slot_date,\n      slot_time: slotTime,\n      timezone: chosen.timezone,\n      sheet_row_index: chosen.rowIndex,  // use this to update exact row later\n      current_version: chosen.version\n    },\n    user\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "04fdea1a-3c47-441b-b488-36bb93aeeed3",
+      "name": "Pick Doctor"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        144
+      ],
+      "id": "d30e827b-3350-4940-ba2e-7f4746f80b83",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4e5f370d-c6cd-4f2c-ba1a-f473c470f03b",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        -96
+      ],
+      "id": "a89d50bd-9f32-48de-85ec-ae883f5f9055",
+      "name": "If"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "28b9c2f6-d991-4f8a-84fb-d4a6d36e398c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2128,
+        -112
+      ],
+      "id": "f2f8ebb2-065b-40f6-9ed0-35a4ef4a5b6b",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a medical clinic's automated assistant.\n\nTask:\nFrom the JSON booking data (fields are available via templating variables), create a fully styled HTML email addressed to the hospital’s registration desk. The email must include: booking ID, patient details, hospital, department, doctor, appointment date/time, and notes. After the email body, include a short summary (2–3 sentences) for quick reference.\n\nOutput requirements:\n- a FULL HTML document (no markdown, no explanations).\n\nUse a clean, professional style. The HTML must include:\n- <!DOCTYPE html>, <html>, <head> with <meta charset=\"UTF-8\">, and <body>.\n- A <style> block for basic CSS.\n- A heading, greeting, brief intro, a details table (alternating row colors), a polite closing.\n- A “Summary” section after the table.\n\nUse these templated variables directly:\n  {{$json.id}}, {{$json.patient_name}}, {{$json.patient_email}}, {{$json.patient_phone}},\n  {{$json.hospital_id}}, {{$json.hospital_name}}, {{$json.department}},\n  {{$json.doctor_id}}, {{$json.doctor_name}},\n  {{$json.appointment_date}}, {{$json.appointment_time}},\n  {{$json.notes}}, {{$json.hospital_email}}\n\nNow produce the output in this exact order:\n\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <title>Appointment Confirmation — {{$json.id}}</title>\n  <style>\n    body{font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.55;background:#f7f9fb;margin:0;padding:24px;}\n    .email{max-width:640px;margin:0 auto;background:#fff;border:1px solid #e6e9ef;border-radius:8px;box-shadow:0 1px 3px rgba(16,24,40,0.04);}\n    .inner{padding:24px;}\n    h1{font-size:20px;margin:0 0 12px;color:#0b5cab;}\n    p{margin:0 0 12px;}\n    .muted{color:#667085;font-size:13px;}\n    .table{width:100%;border-collapse:collapse;margin-top:12px;}\n    .table th,.table td{padding:10px 12px;text-align:left;vertical-align:top;border-bottom:1px solid #edf0f5;}\n    .table th{width:36%;background:#f6f8fb;color:#344054;font-weight:600;}\n    .table tr:nth-child(even) td{background:#fbfcfe;}\n    .section-title{margin-top:18px;font-size:16px;color:#0b5cab;}\n    .footer{margin-top:18px;font-size:12px;color:#98a2b3;}\n    a{color:#0b5cab;text-decoration:none;}\n  </style>\n</head>\n<body>\n  <div class=\"email\">\n    <div class=\"inner\">\n      <h1>Appointment Confirmation</h1>\n      <p>Dear Registration Desk,</p>\n      <p>Please find below the appointment details for <strong>{{$json.patient_name}}</strong> ({{$json.patient_email}}). Kindly ensure all necessary arrangements are made.</p>\n\n      <table class=\"table\" role=\"presentation\" aria-label=\"Appointment Details\">\n        <tr><th>Booking ID</th><td>{{$json.id}}</td></tr>\n        <tr><th>Patient Name</th><td>{{$json.patient_name}}</td></tr>\n        <tr><th>Patient Email</th><td><a href=\"mailto:{{$json.patient_email}}\">{{$json.patient_email}}</a></td></tr>\n        <tr><th>Patient Phone</th><td>{{$json.patient_phone}}</td></tr>\n        <tr><th>Hospital</th><td>{{$json.hospital_name}} ({{$json.hospital_id}})</td></tr>\n        <tr><th>Department</th><td>{{$json.department}}</td></tr>\n        <tr><th>Doctor</th><td>{{$json.doctor_name}} ({{$json.doctor_id}})</td></tr>\n        <tr><th>Appointment Date</th><td>{{$json.appointment_date}}</td></tr>\n        <tr><th>Appointment Time</th><td>{{$json.appointment_time}}</td></tr>\n        <tr><th>Notes</th><td>{{$json.notes}}</td></tr>\n      </table>\n\n      <p class=\"section-title\">Summary</p>\n      <p>{{$json.patient_name}} is scheduled with {{$json.doctor_name}} in the {{$json.department}} department on {{$json.appointment_date}} at {{$json.appointment_time}}. Notes indicate: {{$json.notes}}. Please confirm receipt and prepare the necessary arrangements.</p>\n\n      <p class=\"muted\">If any detail is incorrect, please reply to this email to update the booking.</p>\n\n      <div class=\"footer\">\n        Sent by Clinic Booking Assistant • Reference: {{$json.id}}\n      </div>\n    </div>\n  </div>\n</body>\n</html>\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        -432
+      ],
+      "id": "ae93b2cb-0c27-4833-91ca-937ff5c6f55f",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -256
+      ],
+      "id": "cd141f11-51da-479b-81ca-4917105511b9",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "jadaKwkHqeRCh36x",
+          "name": "Groq account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        -272
+      ],
+      "id": "66666130-d045-41b7-b94f-9ab0236400e5",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ [$json.hospital_email, $json.dr_email].filter(Boolean).join(', ') }}",
+        "subject": "=Patient Registration - {{ $json.hospital_id }}",
+        "message": "={{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2512,
+        -272
+      ],
+      "id": "e6def750-5bac-4ad6-815b-7da3c66fa78e",
+      "name": "Send a message",
+      "webhookId": "91b0edd3-b17e-4633-af3a-15c38d4611f2",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Dd4piEfbtXWr6yUR",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hospital List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.id }}",
+            "queue_json": "={\"respiratory\":{\"people\":{{ $json.queue_json.parseJson().respiratory.people + 1 }}\n,\"avgMinPerPatient\":{{ $json.queue_json.parseJson().respiratory.avgMinPerPatient + 10 }}}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "address",
+              "displayName": "address",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hosp_email",
+              "displayName": "hosp_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lat",
+              "displayName": "lat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lng",
+              "displayName": "lng",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "departments_json",
+              "displayName": "departments_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "doctors_json",
+              "displayName": "doctors_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "queue_json",
+              "displayName": "queue_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "availability_json",
+              "displayName": "availability_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        2448,
+        64
+      ],
+      "id": "eee61ef3-a2e3-443c-b5db-bcfc4b67a6ac",
+      "name": "Update Hospital's Queue Json",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1179142729,
+          "mode": "list",
+          "cachedResultName": "Appointment",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=1179142729"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.booking.booking_id}}",
+            "patient_name": "={{ $json.user.name}}",
+            "patient_email": "={{ $json.user.email }}",
+            "patient_phone": "={{ $json.user.phone }}",
+            "hospital_id": "={{ $json.booking.hospital_id}}",
+            "hospital_name": "={{ $json.booking.hospital_name }}",
+            "doctor_id": "={{ $json.booking.doctor_id}}",
+            "doctor_name": "={{ $json.booking.doctor_name }}",
+            "department": "={{ $json.booking.department }}",
+            "appointment_date": "={{ $json.booking.slot_date }}",
+            "appointment_time": "={{ $json.booking.slot_time }}",
+            "notes": "={{ $json.user.notes }}",
+            "hospital_email": "={{ $json.booking.hospitalEmail }}",
+            "dr_email": "={{ $json.booking.doctor_email }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "patient_name",
+              "displayName": "patient_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "patient_email",
+              "displayName": "patient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "patient_phone",
+              "displayName": "patient_phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_id",
+              "displayName": "hospital_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_name",
+              "displayName": "hospital_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "doctor_id",
+              "displayName": "doctor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "doctor_name",
+              "displayName": "doctor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "appointment_date",
+              "displayName": "appointment_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "appointment_time",
+              "displayName": "appointment_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_email",
+              "displayName": "hospital_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "dr_email",
+              "displayName": "dr_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1136,
+        -128
+      ],
+      "id": "f6ea42b5-1caa-487e-ba54-ce8e6cc3a587",
+      "name": "Add Appointment",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 28100875,
+          "mode": "list",
+          "cachedResultName": "Doctor List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=28100875"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        208,
+        0
+      ],
+      "id": "40774d9c-6b34-42fd-9500-bd0df15844e2",
+      "name": "Get Docter List Based on Hospital ID",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return{               \n  \"user\": { \n    \"name\": $json.body.user.name, \n    \"email\": $json.body.user.email, \n    \"phone\": $json.body.user.phone, \n    \"notes\": $json.body.user.notes\n  }\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        -224
+      ],
+      "id": "022b7fd6-01b6-4a02-aa7f-0760ca6b39b8",
+      "name": "Format User Details Json"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hospital List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "id",
+              "lookupValue": "={{ $json.hospital_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        2112,
+        64
+      ],
+      "id": "64fcc498-3e47-4142-b483-a7f7c9257778",
+      "name": "Get Hospital Based on Hospital ID",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 28100875,
+          "mode": "list",
+          "cachedResultName": "Doctor List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=28100875"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "doctor_id",
+              "lookupValue": "={{ $json.doctor_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1504,
+        368
+      ],
+      "id": "7bfff243-bc19-4e66-96bb-229a7d41b187",
+      "name": "Get Doctor List",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 28100875,
+          "mode": "list",
+          "cachedResultName": "Doctor List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=28100875"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "doctor_id": "={{ $json.doctor_id }}",
+            "slots_json ": "={{ \n  JSON.stringify(\n    $json[\"slots_json \"].parseJson().filter(slot => slot !== $json.appointment_time)\n  ) \n}}\n"
+          },
+          "matchingColumns": [
+            "doctor_id"
+          ],
+          "schema": [
+            {
+              "id": "doctor_id",
+              "displayName": "doctor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "doctor_name",
+              "displayName": "doctor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "doctor_email",
+              "displayName": "doctor_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_id",
+              "displayName": "hospital_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_name",
+              "displayName": "hospital_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slot_date",
+              "displayName": "slot_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slots_json ",
+              "displayName": "slots_json ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timezone ",
+              "displayName": "timezone ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_email",
+              "displayName": "hospital_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        2160,
+        352
+      ],
+      "id": "e985c94f-6636-4109-906d-8d8f203aacb8",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1872,
+        352
+      ],
+      "id": "76569e63-d7b7-4e82-a889-61da3df800d9",
+      "name": "Merge Appointment Date with Slot Json"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 28100875,
+          "mode": "list",
+          "cachedResultName": "Doctor List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=28100875"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "doctor_id": "={{ $json.doctor_id }}",
+            "slot_date": "not available"
+          },
+          "matchingColumns": [
+            "doctor_id"
+          ],
+          "schema": [
+            {
+              "id": "doctor_id",
+              "displayName": "doctor_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "doctor_name",
+              "displayName": "doctor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "doctor_email",
+              "displayName": "doctor_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_id",
+              "displayName": "hospital_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_name",
+              "displayName": "hospital_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slot_date",
+              "displayName": "slot_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slots_json ",
+              "displayName": "slots_json ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timezone ",
+              "displayName": "timezone ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hospital_email",
+              "displayName": "hospital_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        2656,
+        272
+      ],
+      "id": "5c5cfb09-2560-4ab9-a4cb-eb65cd2d6fd7",
+      "name": "Update row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dd31b577-faa4-4766-99ba-c743c926254d",
+              "leftValue": "={{ !$json[\"slots_json \"] || $json[\"slots_json \"].trim() }}",
+              "rightValue": "=[]",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2368,
+        352
+      ],
+      "id": "045b06e0-6200-469b-87ca-9c38f7c5e79e",
+      "name": "Check if slot json is empty"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Docter List Based on Hospital ID",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format User Details Json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Doctor": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Add Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Appointment": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Hospital Based on Hospital ID",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Doctor List",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Appointment Date with Slot Json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Docter List Based on Hospital ID": {
+      "main": [
+        [
+          {
+            "node": "Pick Doctor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format User Details Json": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Hospital Based on Hospital ID": {
+      "main": [
+        [
+          {
+            "node": "Update Hospital's Queue Json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Doctor List": {
+      "main": [
+        [
+          {
+            "node": "Merge Appointment Date with Slot Json",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Appointment Date with Slot Json": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Check if slot json is empty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if slot json is empty": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "bd4256ed-090c-46d2-83da-f9332e2dd209",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7f9a06f1f729cdaa45092392137f40a0af2399b3f031e843663396f632555f1f"
+  },
+  "id": "A17r8WyZUd6sobg8",
+  "tags": []
+}

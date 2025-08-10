@@ -1,0 +1,415 @@
+{
+  "name": "hospital_filter",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "d634aaae-c6bb-4d31-aa3a-ad0397854f10",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        864
+      ],
+      "id": "f3da5b93-59ab-46c8-8090-941277d43a69",
+      "name": "Webhook",
+      "webhookId": "d634aaae-c6bb-4d31-aa3a-ad0397854f10"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agentPayload.messages[1].content }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        352,
+        864
+      ],
+      "id": "222e7a7e-7002-4100-95f6-d8362b2edc6f",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        224,
+        1072
+      ],
+      "id": "a5452c84-d8d6-4a60-b48d-c79a7b5b5220",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "IdUjLFEWDFKLpMnm",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs",
+          "mode": "list",
+          "cachedResultName": "Hospital Availability",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hospital List",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqYvr8RZ9YSW08Xe8lhtWOPnGKtGT_fsojOzaXQE-xs/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.6,
+      "position": [
+        512,
+        1072
+      ],
+      "id": "a07ee60f-e4b8-4ebb-a108-f08b2562b442",
+      "name": "Get row(s) in sheet in Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: $json.body from webhook\n// Output: { agentPayload, policy }\nconst input = $json.body || {};\n\nconst policy = {\n  department: String(input.department || \"general\").toLowerCase(),\n  insuranceRef: !!input.insuranceRef,\n  preference: String(input.preference || \"\").toLowerCase(), // 'public' | 'private' | ''\n  filters: { department_match: true, availability_required: true },\n  topK: 8,\n  requiredFields: [\n    \"id\",\"name\",\"address\",\"location_in_latidude_and_longitude\",\n    \"phone\",\"website\",\"hospital_type\",\"distance_km_from_user_location\",\n    \"current_queue_people\",\"avg_wait_minutes\",\"doctors_available\",\n    \"ranking_score\",\"from_user_location\"\n  ],\n};\n\nconst userLocation = input.location || { lat: 0, lng: 0 };\n\n// Tiny example to anchor the model\nconst example = {\n  top8: [\n    {\n      id: \"HSP001\",\n      name: \"Example Hospital\",\n      address: \"1 Example Rd, City\",\n      location_in_latidude_and_longitude: { lat: 3.1000, lng: 101.6500 },\n      phone: \"60 3-0000 0000\",\n      website: \"https://example.hospital\",\n      hospital_type: \"public\",\n      distance_km_from_user_location: 3.1,\n      current_queue_people: 7,\n      avg_wait_minutes: 12,\n      doctors_available: 3,\n      ranking_score: 4.5,\n      from_user_location: { lat: userLocation.lat ?? 0, lng: userLocation.lng ?? 0 }\n    }\n  ]\n};\n\nconst systemMsg = \"Follow the user message exactly and return STRICT JSON only.\";\n\nconst userMsg = [\n  // Task\n  \"Read the Google Sheet via the Sheets tool. NEVER invent rows.\",\n  \"\",\n  // Filtering\n  `Filters to APPLY (and drop rows that fail): ${JSON.stringify(policy.filters)}.`,\n  `Required department: \"${policy.department}\". If a row lacks this department or it's not available=true, DROP it.`,\n  \"If availability info exists and open_now !== true, DROP the row.\",\n  \"\",\n  // Computations\n  `Compute distance_km_from_user_location using Haversine (1 decimal) between user location ${JSON.stringify(userLocation)} and hospital lat/lng.`,\n  \"current_queue_people and avg_wait_minutes are numbers; doctors_available is an integer.\",\n  \"ranking_score is a numeric score you compute (any monotonic score using wait/availability is acceptable).\",\n  \"\",\n  // Selection rule\n  `Return up to ${policy.topK} best rows by your score.`,\n  \"If preference='private': prioritize private over public when scores tie.\",\n  \"If preference='public': prioritize public over private when scores tie.\",\n  \"\",\n  // Output contract\n  \"OUTPUT RULES:\",\n  \"- Output JSON only, no prose, no backticks.\",\n  \"- Key root: top8 (array).\",\n  \"- Each item MUST include EXACTLY these fields:\",\n  JSON.stringify(policy.requiredFields),\n  \"- Types:\",\n  \"  • hospital_type: 'public' or 'private'\",\n  \"  • distance_km_from_user_location: number with 1 decimal (e.g., 3.1)\",\n  \"  • current_queue_people, avg_wait_minutes, doctors_available: integers\",\n  \"  • from_user_location: copy EXACTLY the user location lat/lng into each item\",\n  \"- If a field is missing or non-numeric, DROP that row.\",\n  `- Return at most ${policy.topK} items.`,\n  \"\",\n  // Context\n  `User location: ${JSON.stringify(userLocation)}`,\n  `Symptoms: ${input.symptoms || \"\"}`,\n  `Onset: ${input.onset || \"\"}`,\n  `Trend: ${input.trend || \"\"}`,\n  `Preference: ${policy.preference}`,\n  `InsuranceRef: ${policy.insuranceRef}`,\n  \"\",\n  // Minimal example to anchor formatting\n  \"EXAMPLE (structure only; values will differ):\",\n  JSON.stringify(example),\n].join(\"\\n\");\n\nreturn [{\n  json: {\n    agentPayload: {\n      messages: [\n        { role: \"system\", content: systemMsg },\n        { role: \"user\", content: userMsg }\n      ],\n      // If your OSS gateway doesn't support JSON mode, remove response_format.\n      response_format: { type: \"json_object\" },\n      // If your AI Agent node lets you set per-request params:\n      // temperature: 0,\n      // stop: [\"\\n\\n\"]\n    },\n    policy\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        864
+      ],
+      "id": "11094016-aec0-4412-bd5f-191d1efa429f",
+      "name": "Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get raw output string (Agent usually wraps in { \"output\": \"...\" })\nlet raw = $json.output;\n\n// If the agent's node returns an object with choices/content, adjust here:\n// raw = $json.data?.choices?.[0]?.message?.content || $json.output;\n\nif (typeof raw !== 'string') {\n  throw new Error(\"No string output found to parse\");\n}\n\n// Try to parse — the agent sometimes escapes quotes, so we need two-step parsing\nlet parsed;\ntry {\n  parsed = JSON.parse(raw); // works if it's already plain JSON string\n} catch (err) {\n  try {\n    parsed = JSON.parse(JSON.parse(JSON.stringify(raw))); // try extra pass\n  } catch (err2) {\n    // Last resort: remove wrapping and escape chars\n    const cleaned = raw.replace(/\\\\\"/g, '\"').replace(/\\\\n/g, '').trim();\n    parsed = JSON.parse(cleaned);\n  }\n}\n\n// At this point, parsed should be an object with top5 array\nif (!parsed.top8) {\n  throw new Error(\"Parsed JSON does not contain top5 key\");\n}\n\n// Output as JSON so downstream nodes see real fields\nreturn [{ json: parsed }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        864
+      ],
+      "id": "89859f23-384b-435c-9424-fba8d8402c18",
+      "name": "Json Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: { top8: [...], ... } (like you posted)\nconst list = $json.top8 || [];\nif (!Array.isArray(list) || list.length === 0) throw new Error(\"top8 is empty\");\n\n// your user origin (same for all items) – prefer the per-item copy\nconst origin =\n  list[0]?.from_user_location ||\n  $json.origin ||                     // if you promoted origin earlier\n  { lat: 0, lng: 0 };\n\nconst destinations = list.map((h, i) => {\n  const loc = h.location_in_latidude_and_longitude || {};\n  const lat = Number(loc.lat), lng = Number(loc.lng);\n  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {\n    throw new Error(`Invalid lat/lng at top8[${i}] (${h.id || h.name || 'unknown'})`);\n  }\n  return `${lat},${lng}`;\n}).join('|');\n\nreturn [{\n  json: {\n    origin,\n    destinations,\n    top8: list\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        864
+      ],
+      "id": "7ab171ce-f9a7-4806-b439-53cf08226e23",
+      "name": "Prep Matrix Distance"
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/distancematrix/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "origins",
+              "value": "={{$json.origin.lat}},{{$json.origin.lng}}"
+            },
+            {
+              "name": "destinations",
+              "value": "={{$json.destinations}}"
+            },
+            {
+              "name": "departure_time",
+              "value": "now"
+            },
+            {
+              "name": "key",
+              "value": "AIzaSyDRQ7ZLIZxn3-lJd0PNLfUUlTKnc5rFYqA"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1408,
+        688
+      ],
+      "id": "19773e8d-1bc3-4f0e-870f-ca546c1c940b",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1600,
+        848
+      ],
+      "id": "7b16f1b8-298c-4ed3-9fb9-b65b139cf4a0",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expecting on this merged item:\n// - $json.top8 (array from Prep Matrix Distance)\n// - $json.rows[0].elements (array from Distance Matrix)\n// - optional: destination_addresses/origin_addresses (keep for debugging)\n\nconst list = $json.top8;\nconst dm = $json.rows?.[0]?.elements;\n\nif (!Array.isArray(list) || !Array.isArray(dm)) {\n  throw new Error(\"Missing top8 or Distance Matrix elements.\");\n}\nif (dm.length !== list.length) {\n  // If they differ, we still merge by the shorter length to avoid hard failures\n  const n = Math.min(dm.length, list.length);\n  console.warn(`DM elements (${dm.length}) != top8 (${list.length}). Merging first ${n} only.`);\n  list.length = n; // trim list to match DM count\n}\n\nconst merged = list.map((h, i) => {\n  const e = dm[i] || {};\n  const distM = e.distance?.value ?? null;               // meters\n  const durSec = e.duration_in_traffic?.value\n              ?? e.duration?.value\n              ?? null;                                   // seconds\n\n  const travelMinTraffic = durSec == null ? null : Math.round(durSec / 60);\n  const waitMin = (h.current_queue_people ?? 0) * (h.avg_wait_minutes ?? 12);\n  const etaTotalMin = travelMinTraffic == null ? null : travelMinTraffic + waitMin;\n\n  return {\n    ...h,\n    // overwrite with Google's precise distance if present\n    distance_km_from_user_location: distM == null ? (h.distance_km_from_user_location ?? null)\n                                                  : +(distM / 1000).toFixed(1),\n\n    traffic: {\n      status: e.status || null,\n      distance_text: e.distance?.text ?? null,\n      distance_meters: distM,\n      duration_text: e.duration?.text ?? null,\n      duration_seconds: e.duration?.value ?? null,\n      duration_in_traffic_text: e.duration_in_traffic?.text ?? null,\n      duration_in_traffic_seconds: e.duration_in_traffic?.value ?? null,\n    },\n\n    travel_min_in_traffic: travelMinTraffic,  // driving time now\n    eta_total_min: etaTotalMin                // driving + queue\n  };\n});\n\n// Optional: resort by ETA (smallest first)\nmerged.sort((a, b) => {\n  const A = a.eta_total_min ?? Infinity;\n  const B = b.eta_total_min ?? Infinity;\n  return A - B;\n});\n\nreturn [{\n  json: {\n    origin: $json.origin,\n    destination_addresses: $json.destination_addresses,\n    origin_addresses: $json.origin_addresses,\n    top8: merged\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        848
+      ],
+      "id": "9d4d80f1-c37d-49d8-b308-813ad2b3c837",
+      "name": "Merge with realtime ETA"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2096,
+        848
+      ],
+      "id": "478c9f92-e3e5-4fab-8de1-edfe9031e8a7",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a69945c1-a55c-4f1e-88f2-b5d662e8311b",
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "=[empty]",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        656,
+        688
+      ],
+      "id": "d4ac7232-0347-4660-a132-bab758ff59fc",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      output: {\n        top8: [\n          {\n            id: \"HSP004\",\n            name: \"Hospital Kuala Lumpur\",\n            address: \"Jalan Pahang, 50586 Kuala Lumpur\",\n            location_in_latidude_and_longitude: { lat: 3.17, lng: 101.701 },\n            phone: \"60 3-2615 555\",\n            website: \"https://www.hkl.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 3.8,\n            current_queue_people: 12,\n            avg_wait_minutes: 11,\n            doctors_available: 6,\n            ranking_score: 5.1,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          },\n          {\n            id: \"HSP009\",\n            name: \"Hospital Shah Alam\",\n            address: \"Persiaran Kayangan, Seksyen 7, 40000 Shah Alam\",\n            location_in_latidude_and_longitude: { lat: 3.0813, lng: 101.5181 },\n            phone: \"60 3-5526 500\",\n            website: \"https://hsa.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 19.7,\n            current_queue_people: 11,\n            avg_wait_minutes: 11,\n            doctors_available: 5,\n            ranking_score: 6.85,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          },\n          {\n            id: \"HSP013\",\n            name: \"Hospital Selayang\",\n            address: \"Lebuhraya Selayang-Kepong, 68100 Batu Caves\",\n            location_in_latidude_and_longitude: { lat: 3.2653, lng: 101.6502 },\n            phone: \"60 3-6120 3000\",\n            website: \"https://www.hselayang.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 14.6,\n            current_queue_people: 8,\n            avg_wait_minutes: 12,\n            doctors_available: 4,\n            ranking_score: 7.3,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          },\n          {\n            id: \"HSP019\",\n            name: \"Hospital Kajang\",\n            address: \"Jalan Semenyih, 43000 Kajang\",\n            location_in_latidude_and_longitude: { lat: 2.9928, lng: 101.7906 },\n            phone: \"60 3-8734 3333\",\n            website: \"https://hkajang.moh.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 20.0,\n            current_queue_people: 10,\n            avg_wait_minutes: 11,\n            doctors_available: 4,\n            ranking_score: 11.0,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          },\n          {\n            id: \"HSP012\",\n            name: \"Hospital Putrajaya\",\n            address: \"Presint 7, 62250 Putrajaya\",\n            location_in_latidude_and_longitude: { lat: 2.9431, lng: 101.7131 },\n            phone: \"60 3-8312 4000\",\n            website: \"https://www.hpj.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 22.0,\n            current_queue_people: 7,\n            avg_wait_minutes: 10,\n            doctors_available: 3,\n            ranking_score: 13.0,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          },\n          {\n            id: \"HSP017\",\n            name: \"Hospital Tengku Ampuan Rahimah Klang\",\n            address: \"Jalan Langat, 41200 Klang\",\n            location_in_latidude_and_longitude: { lat: 3.0143, lng: 101.4342 },\n            phone: \"60 3-3375 7000\",\n            website: \"https://htar.moh.gov.my\",\n            hospital_type: \"public\",\n            distance_km_from_user_location: 31.2,\n            current_queue_people: 12,\n            avg_wait_minutes: 11,\n            doctors_available: 4,\n            ranking_score: 18.6,\n            from_user_location: { lat: 3.139, lng: 101.686 }\n          }\n        ]\n      }\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        624
+      ],
+      "id": "10bd762f-cdab-4acf-97f5-fd40d5c2db42",
+      "name": "Code"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet in Google Sheets": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatter": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Json Formatter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Json Formatter": {
+      "main": [
+        [
+          {
+            "node": "Prep Matrix Distance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Matrix Distance": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Merge with realtime ETA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge with realtime ETA": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Json Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Json Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "25653c71-d4e9-4ed2-965c-ec47924a23af",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7f9a06f1f729cdaa45092392137f40a0af2399b3f031e843663396f632555f1f"
+  },
+  "id": "bebO2LXRkuDx7Qw4",
+  "tags": []
+}

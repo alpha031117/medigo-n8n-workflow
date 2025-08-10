@@ -1,0 +1,775 @@
+{
+  "name": "voice assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Loop over all input items (usually one for webhook)\nreturn $input.all().map(item => {\n  // Extract symptoms, time, and description from the webhook body\n  const body = item.json.body || {};\n  const symptoms = body.symptoms || \"\";\n  const time = body.time || \"\";\n  const describe = body.describe || \"\";\n\n  // Construct the user question including the data\n  const userQuestion = `Based on the symptoms, time and describe, suggest the most relevant hospital department, suggest one only. Pick from department Cardiology, Neurology or Respiratory. When you return answer, just tell me the name of the department. Without the word \"Department\"\\n\nSymptoms: ${symptoms}\\nTime: ${time}\\nDescribe: ${describe}`;\n\n  // System message to guide the AI agent\n  const systemMsg = \"You are a helpful medical assistant.\";\n\n  // Build the agentPayload JSON for the AI Agent node\n  const agentPayload = {\n    messages: [\n      { role: \"system\", content: systemMsg },\n      { role: \"user\", content: userQuestion }\n    ],\n    response_format: { type: \"json_object\" }\n  };\n\n  return {\n    json: {\n      agentPayload: agentPayload\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "938d2ead-8b86-435d-b631-266efe75fa41",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.agentPayload.messages[1].content }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "bc47e827-0158-4a2e-aa06-ce6d13f9f4fc",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        288,
+        208
+      ],
+      "id": "9124a5fe-7121-4752-bfe5-614c5c75781f",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "jadaKwkHqeRCh36x",
+          "name": "Groq account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "location": "={{$json.body.location}}",
+            "preference": "={{$json.body.preference}}",
+            "insuranceRef": "={{$json.body.insuranceRef}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "preference",
+              "displayName": "preference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "insuranceRef",
+              "displayName": "insuranceRef",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -96,
+        -784
+      ],
+      "id": "291c3791-12ba-4f58-89a4-bbfbb573b6f9",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "84d12472-a1d7-45e7-bff6-3cd6021be8ef",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -352,
+        -784
+      ],
+      "id": "6dfad51f-ec40-4586-8d60-66fe2d9cd206",
+      "name": "POST from React",
+      "webhookId": "84d12472-a1d7-45e7-bff6-3cd6021be8ef"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over all input items and create a new field 'departmentSuggestion' from 'output' field\nfor (const item of $input.all()) {\n  let output = item.json.output || \"unknown\";\n  // Remove asterisks if present\n  output = output.replace(/\\*/g, '').trim();\n  item.json = {\n    departmentSuggestion: output\n  };\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        0
+      ],
+      "id": "1e92cc0c-629a-49c2-bf35-926fec2ad294",
+      "name": "Json Formatter from Agent"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        752,
+        -176
+      ],
+      "id": "6e39e1d5-7f88-4016-81b0-1e56e57da9b6",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1072,
+        -32
+      ],
+      "id": "d5f08ba7-9c1b-42a2-b5b3-cd2d99405f21",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=0"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1312,
+        -32
+      ],
+      "id": "de3f38c0-d164-4a9a-a6c2-d8926917dceb",
+      "name": "Delete rows or columns from sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f63ad4bd-fd6a-41de-b4a8-02629df2c606",
+              "leftValue": "={{$json.body.type}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notExists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -320,
+        -352
+      ],
+      "id": "e1530215-e796-4879-a865-0194e3abb658",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a medical note formatter. Given patient symptom data, rephrase each field to be clear, concise, and in natural medical phrasing. Each field must be at least 15 characters long.\n\nYou must select the recommended specialist department from the following list only:\n['respiratory', 'cardio', 'neuro']\n\nThe value in \"recommend department\" must be exactly one of the list items above (lowercase only, without the word \"department\").\n\nReturn the result in valid JSON with exactly these keys:\n- symptom: short main symptom\n- started: when it started\n- description: detailed elaboration\n- recommend department: recommendation of specialist department\n\nThe input is:\n- symptom: {{ $json.symptoms }}\n- symptom_elaboration: {{ $json.symptom_elaboration }}\n- start_time: {{ $json.start_time }}\n\nDo not add extra commentary, only return the JSON.\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        368,
+        -416
+      ],
+      "id": "0554b34a-5e25-410b-bbfc-0829b0554e7d",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        368,
+        -224
+      ],
+      "id": "5e0a1c1a-9dfc-47df-96af-9e997defd9ab",
+      "name": "Groq Chat Model1",
+      "credentials": {
+        "groqApi": {
+          "id": "jadaKwkHqeRCh36x",
+          "name": "Groq account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let outputString = $json.output;\n\n// Remove Markdown code block markers if present\noutputString = outputString.replace(/```json|```/g, '').trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(outputString);\n} catch (error) {\n  throw new Error(\"Invalid JSON format: \" + error.message);\n}\n\nreturn [{ json: parsed }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -416
+      ],
+      "id": "3bee654f-13b8-40aa-9a3b-8a1d8dfb96ed",
+      "name": "Agent Json Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      symptoms: $json.body.symptoms || $json.body.analysis?.data_collection_results?.symptoms?.value,\n      start_time: $json.body.start_time || $json.body.analysis?.data_collection_results?.[\"start time\"]?.value,\n      symptom_elaboration: $json.body.symptom_elaboration || $json.body.analysis?.data_collection_results?.[\"symptom elaboration\"]?.value\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -480
+      ],
+      "id": "a3019aaa-7fe9-4e4a-9e9d-8be8e195d698",
+      "name": "Shoter Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n        symptoms: $json.body.data.analysis.data_collection_results.symptoms.rationale,\n        start_time: $json.body.data.analysis.data_collection_results[\"start time\"].rationale,\n        symptom_elaboration: $json.body.data.analysis.data_collection_results[\"symptom elaboration\"].rationale\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -240
+      ],
+      "id": "52a8a10b-9795-4fb4-808d-916cd1b0ede6",
+      "name": "Detailed Formatter"
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  headers: {\n    host: \"doodledaron.app.n8n.cloud\",\n    \"user-agent\": \"ElevenLabs/1.0\",\n    \"content-length\": \"123\",\n    accept: \"*/*\",\n    \"accept-encoding\": \"gzip, br\",\n    \"cdn-loop\": \"cloudflare; loops=1; subreqs=1\",\n    \"cf-connecting-ip\": \"34.59.11.47\",\n    \"cf-ew-via\": \"15\",\n    \"cf-ipcountry\": \"US\",\n    \"cf-ray\": \"96c875106109f14f-ORD\",\n    \"cf-visitor\": \"{\\\"scheme\\\":\\\"https\\\"}\",\n    \"cf-worker\": \"n8n.cloud\",\n    \"content-type\": \"application/json\",\n    \"x-forwarded-for\": \"34.59.11.47, 172.70.130.253\",\n    \"x-forwarded-host\": \"doodledaron.app.n8n.cloud\",\n    \"x-forwarded-port\": \"443\",\n    \"x-forwarded-proto\": \"https\",\n    \"x-forwarded-server\": \"traefik-prod-users-gwc-52-6c4f4684d5-sdmff\",\n    \"x-is-trusted\": \"yes\",\n    \"x-real-ip\": \"34.59.11.47\"\n  },\n  params: {},\n  query: {},\n  body: {\n    symptoms: \"breathing difficulties\",\n    start_time: \"five hours before\",\n    symptom_elaboration: \"cannot breathe properly\"\n  },\n  webhookUrl: \"https://doodledaron.app.n8n.cloud/webhook-test/c9489027-d8b7-4504-aedb-d354330a0ef3\",\n  executionMode: \"test\"\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        -752
+      ],
+      "id": "beecebda-dc74-4f72-b172-aa634868a2b6",
+      "name": "Shoter Formatter1"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2131459940,
+          "mode": "list",
+          "cachedResultName": "confirmation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=2131459940"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "symptom": "={{ $json.symptom }}",
+            "started": "={{ $json.started }}",
+            "description": "={{ $json.description }}",
+            "recommend department": "={{ $json['recommend department'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "symptom",
+              "displayName": "symptom",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "started",
+              "displayName": "started",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommend department",
+              "displayName": "recommend department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        928,
+        -416
+      ],
+      "id": "db5cbbe0-db59-4044-a199-36c7a8f2d9e0",
+      "name": "Temperorary DB",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        128,
+        -1008
+      ],
+      "id": "4977bdf5-bf52-4314-8951-bfbab7be6eeb",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2131459940,
+          "mode": "list",
+          "cachedResultName": "confirmation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=2131459940"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        128,
+        -1216
+      ],
+      "id": "9ba13427-0ac4-4f7a-8aa7-5ad84a8f101e",
+      "name": "Delete existing confirmation row",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo",
+          "mode": "list",
+          "cachedResultName": "Temperorary DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2131459940,
+          "mode": "list",
+          "cachedResultName": "confirmation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1V-tz3ur78AdWngbRPEhlojc-AdGpIeJQzA7Wwx98jYo/edit#gid=2131459940"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -96,
+        -1008
+      ],
+      "id": "ce4c6ff5-6bd6-4a75-9cc5-c6d165f0a604",
+      "name": "Get confirmation row",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5T3MBbSaOQAN8Onr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "39e888c9-8fb0-4ebc-af3b-8afc06f27338",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -352,
+        -1008
+      ],
+      "id": "11dfee91-e8dc-4928-bbbe-4d08d62ad53b",
+      "name": "POST Final Confirmation",
+      "webhookId": "39e888c9-8fb0-4ebc-af3b-8afc06f27338"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "c9489027-d8b7-4504-aedb-d354330a0ef3",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -592,
+        0
+      ],
+      "id": "e91f7b59-3019-44ef-8305-392bdbdab7be",
+      "name": "Triggered by Elevenlabs",
+      "webhookId": "c9489027-d8b7-4504-aedb-d354330a0ef3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Json Formatter from Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        []
+      ]
+    },
+    "POST from React": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Json Formatter from Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Delete rows or columns from sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Shoter Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Detailed Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Agent Json Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Json Formatter": {
+      "main": [
+        [
+          {
+            "node": "Temperorary DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shoter Formatter": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detailed Formatter": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shoter Formatter1": {
+      "main": [
+        []
+      ]
+    },
+    "Temperorary DB": {
+      "main": [
+        []
+      ]
+    },
+    "Get confirmation row": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Delete existing confirmation row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Final Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Get confirmation row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triggered by Elevenlabs": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "38ee5b19-59f8-4f78-b8d2-c170a145017f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7f9a06f1f729cdaa45092392137f40a0af2399b3f031e843663396f632555f1f"
+  },
+  "id": "qq53XyiB3tIrLTQ0",
+  "tags": []
+}
